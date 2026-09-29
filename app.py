@@ -4,21 +4,20 @@ from PIL import Image
 import re
 import pandas as pd
 import math
+import io
 
 st.set_page_config(page_title="Auto-Planner Packer", layout="wide")
 st.title("🏭 Auto-Planner Packer L1 & L2")
 
-# --- FUNGSI EKSTRAKSI TEKS (STOK 6 VARIAN) ---
+# --- FUNGSI EKSTRAKSI TEKS (STOK) ---
 def parse_stock(text):
     stock = {'40K': 0, '40K_CPM': 0, '40P': 0, '40P_CPM': 0, '50K': 0, '50K_CPM': 0}
     if not text: return stock
-    
     lines = text.lower().split('\n')
     for line in lines:
         match = re.search(r':\s*(\d+)', line)
         if not match: continue
         val = int(match.group(1))
-        
         if '40' in line:
             if re.search(r'\b(plastik|p)\b', line):
                 if 'cpm' in line: stock['40P_CPM'] += val
@@ -30,22 +29,20 @@ def parse_stock(text):
             if re.search(r'\b(kertas|k)\b', line):
                 if 'cpm' in line: stock['50K_CPM'] += val
                 else: stock['50K'] += val
-                
     return stock
 
-# --- FUNGSI EKSTRAKSI GAMBAR ---
-def parse_so_image(image):
-    text = pytesseract.image_to_string(image)
-    so_data = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
+# --- FUNGSI EKSTRAKSI GAMBAR (DENGAN CACHE AGAR CEPAT) ---
+@st.cache_data
+def get_ocr_data(image_bytes):
+    img = Image.open(io.BytesIO(image_bytes))
+    text = pytesseract.image_to_string(img)
+    so_data = {'40K': 0.0, '40K_CPM': 0.0, '50K': 0.0, '50K_CPM': 0.0}
     
     lines = text.upper().split('\n')
     for line in lines:
         if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
             cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
-            
-            # Ubah tanda strip (-) atau yang mirip menjadi 0.00
             cleaned = re.sub(r'(?<!\S)[-—_~](?!\S)', '0.00', cleaned)
-            
             decimal_numbers = re.findall(r'\b\d+(?:,\d{3})*\.\d+\b', cleaned)
             
             if decimal_numbers:
@@ -56,8 +53,7 @@ def parse_so_image(image):
                 elif '50' in line:
                     if 'CPM' in line: so_data['50K_CPM'] += val
                     else: so_data['50K'] += val
-                    
-    return so_data, text
+    return so_data
 
 # --- UI APLIKASI ---
 col1, col2 = st.columns(2)
@@ -66,58 +62,55 @@ with col1:
     st.subheader("1. Input Data & Scan")
     stok_text = st.text_area("Paste Teks Stok Gudang:", height=130)
     so_image = st.file_uploader("Upload Gambar Tabel SO (JPG/PNG)", type=['png', 'jpg', 'jpeg'])
-    
-    st.markdown("---")
-    st.subheader("2. Koreksi Manual SO READY (Bila Perlu)")
-    st.caption("Jika scan foto meleset, ketik angka aslinya di sini. Kosongkan jika scan sudah benar.")
-    
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        # value=None memungkinkan kotak tampil kosong, tapi bisa diisi 0 jika mau menimpa OCR
-        m_40k = st.number_input("40 Kertas:", value=None, placeholder="Scan Otomatis")
-        m_40k_cpm = st.number_input("40K CPM:", value=None, placeholder="Scan Otomatis")
-    with col_b:
-        m_40p = st.number_input("40 Plastik:", value=None, placeholder="Wajib Diisi")
-        m_40p_cpm = st.number_input("40P CPM:", value=None, placeholder="Wajib Diisi")
-    with col_c:
-        m_50k = st.number_input("50 Kertas:", value=None, placeholder="Scan Otomatis")
-        m_50k_cpm = st.number_input("50K CPM:", value=None, placeholder="Scan Otomatis")
-    
-    st.markdown("---")
-    mode = st.selectbox("3. Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
+    mode = st.selectbox("Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
 
 with col2:
-    st.subheader("4. Hasil Kalkulasi & Jadwal")
-    if st.button("Generate Planning", type="primary"):
-        if stok_text: 
-            with st.spinner("Memproses data..."):
-                stok = parse_stock(stok_text)
+    st.subheader("2. Verifikasi Data (BISA DIEDIT!)")
+    if stok_text and so_image:
+        
+        # 1. Ekstrak Data
+        stok = parse_stock(stok_text)
+        so_ocr = get_ocr_data(so_image.getvalue())
+        
+        # 2. Siapkan Tabel (40 Plastik default 0, silakan diedit)
+        df_edit = pd.DataFrame({
+            'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
+            'Stok (Plt)': [stok['40K'], stok['40K_CPM'], stok['40P'], stok['40P_CPM'], stok['50K'], stok['50K_CPM']],
+            'SO Ready (Ton)': [so_ocr['40K'], so_ocr['40K_CPM'], 0.0, 0.0, so_ocr['50K'], so_ocr['50K_CPM']]
+        })
+        
+        st.info("💡 **Tabel di bawah ini interaktif!** Jika hasil scan kamera meleset karena foto buram, **klik dua kali** angkanya di dalam tabel dan ganti secara manual (contoh: ganti 52 jadi 0).")
+        
+        # 3. Tampilkan Tabel Interaktif (Bisa langsung diubah oleh user)
+        edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # 4. Tombol Generate dengan data yang sudah diverifikasi
+        if st.button("Generate Planning", type="primary"):
+            with st.spinner("Menghitung Jadwal..."):
                 
-                if so_image:
-                    img = Image.open(so_image)
-                    so, raw_text = parse_so_image(img)
-                else:
-                    so = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
-                    raw_text = "Tidak ada gambar."
+                # Tarik data dari tabel yang sudah diedit/diverifikasi
+                s_40k = edited_df.loc[0, 'Stok (Plt)']; o_40k = edited_df.loc[0, 'SO Ready (Ton)']
+                s_40kc = edited_df.loc[1, 'Stok (Plt)']; o_40kc = edited_df.loc[1, 'SO Ready (Ton)']
+                s_40p = edited_df.loc[2, 'Stok (Plt)']; o_40p = edited_df.loc[2, 'SO Ready (Ton)']
+                s_40pc = edited_df.loc[3, 'Stok (Plt)']; o_40pc = edited_df.loc[3, 'SO Ready (Ton)']
+                s_50k = edited_df.loc[4, 'Stok (Plt)']; o_50k = edited_df.loc[4, 'SO Ready (Ton)']
+                s_50kc = edited_df.loc[5, 'Stok (Plt)']; o_50kc = edited_df.loc[5, 'SO Ready (Ton)']
+
+                # Kalkulasi Net Tonase
+                net_40k = (s_40k * 2) - o_40k
+                net_40kc = (s_40kc * 2) - o_40kc
+                net_40p = (s_40p * 2) - o_40p
+                net_40pc = (s_40pc * 2) - o_40pc
+                net_50k = (s_50k * 2) - o_50k
+                net_50kc = (s_50kc * 2) - o_50kc
                 
-                # FITUR OVERRIDE: Menimpa hasil foto JIKA kotak manual diisi (Bahkan diisi 0 pun akan tertimpa)
-                if m_40k is not None: so['40K'] = m_40k
-                if m_40k_cpm is not None: so['40K_CPM'] = m_40k_cpm
-                if m_50k is not None: so['50K'] = m_50k
-                if m_50k_cpm is not None: so['50K_CPM'] = m_50k_cpm
+                net_40k_total = net_40k + net_40kc
+                net_40p_total = net_40p + net_40pc
+                net_50k_total = net_50k + net_50kc
                 
-                # Khusus Plastik selalu dari manual, jika kosong anggap 0
-                so['40P'] = m_40p if m_40p is not None else 0.0
-                so['40P_CPM'] = m_40p_cpm if m_40p_cpm is not None else 0.0
-                
-                nets = {}
-                for key in stok.keys():
-                    nets[key] = (stok[key] * 2) - so.get(key, 0)
-                
-                net_40k_total = nets['40K'] + nets['40K_CPM']
-                net_40p_total = nets['40P'] + nets['40P_CPM']
-                net_50k_total = nets['50K'] + nets['50K_CPM']
-                
+                # Aturan runMax berdasarkan Mode Operasional
                 if mode == "Normal":
                     target_40k = 1200; target_40p = 1200
                 elif mode == "Polysling":
@@ -173,18 +166,17 @@ with col2:
                         l1_terpakai += buka_40k_l1 * 80
                 if l1_terpakai == 0: l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
 
-                # OUTPUT
+                # HASIL AKHIR
                 st.write(f"*Target produksi (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
                 st.success("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
                 st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
                 
-                with st.expander("Klik untuk lihat detail stok & net tonase"):
-                    df_baca = pd.DataFrame({
+                with st.expander("Klik untuk lihat detail Net Tonase Akhir"):
+                    df_akhir = pd.DataFrame({
                         'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
-                        'Stok (Plt)': [stok['40K'], stok['40K_CPM'], stok['40P'], stok['40P_CPM'], stok['50K'], stok['50K_CPM']],
-                        'SO Ready (Ton)': [so['40K'], so['40K_CPM'], so['40P'], so['40P_CPM'], so['50K'], so['50K_CPM']],
-                        'Net (Ton)': [nets['40K'], nets['40K_CPM'], nets['40P'], nets['40P_CPM'], nets['50K'], nets['50K_CPM']]
+                        'Net (Ton)': [net_40k, net_40kc, net_40p, net_40pc, net_50k, net_50kc]
                     })
-                    st.dataframe(df_baca, hide_index=True)
-        else:
-            st.warning("Mohon Paste teks Stok Gudang terlebih dahulu.")
+                    st.dataframe(df_akhir, hide_index=True)
+
+    else:
+        st.warning("Mohon isi teks stok dan upload gambar SO terlebih dahulu.")
