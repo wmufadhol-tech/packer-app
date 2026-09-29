@@ -33,7 +33,7 @@ def parse_stock(text):
                 
     return stock
 
-# --- FUNGSI EKSTRAKSI GAMBAR (KUNCI TITIK DESIMAL + STRIP) ---
+# --- FUNGSI EKSTRAKSI GAMBAR ---
 def parse_so_image(image):
     text = pytesseract.image_to_string(image)
     so_data = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
@@ -41,13 +41,11 @@ def parse_so_image(image):
     lines = text.upper().split('\n')
     for line in lines:
         if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
-            # Hapus teks '40KG' atau '50KG' agar tidak mengganggu
             cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
             
-            # UBAH STRIP (-) MENJADI 0.00 AGAR DIKENALI SEBAGAI DESIMAL
-            cleaned = re.sub(r'(?<!\S)-(?!\S)', '0.00', cleaned)
+            # Ubah tanda strip (-) atau yang mirip menjadi 0.00
+            cleaned = re.sub(r'(?<!\S)[-—_~](?!\S)', '0.00', cleaned)
             
-            # Khusus mencari angka yang ADA TITIK DESIMALNYA (Ciri khas SO READY)
             decimal_numbers = re.findall(r'\b\d+(?:,\d{3})*\.\d+\b', cleaned)
             
             if decimal_numbers:
@@ -70,19 +68,20 @@ with col1:
     so_image = st.file_uploader("Upload Gambar Tabel SO (JPG/PNG)", type=['png', 'jpg', 'jpeg'])
     
     st.markdown("---")
-    st.subheader("2. Backup Manual SO READY (Opsional)")
-    st.caption("Jika hasil scan foto meleset/0, cukup ketik manual di sini:")
+    st.subheader("2. Koreksi Manual SO READY (Bila Perlu)")
+    st.caption("Jika scan foto meleset, ketik angka aslinya di sini. Kosongkan jika scan sudah benar.")
     
     col_a, col_b, col_c = st.columns(3)
     with col_a:
-        m_40k = st.number_input("40 Kertas:", min_value=0.0, value=0.0)
-        m_40k_cpm = st.number_input("40K CPM:", min_value=0.0, value=0.0)
+        # value=None memungkinkan kotak tampil kosong, tapi bisa diisi 0 jika mau menimpa OCR
+        m_40k = st.number_input("40 Kertas:", value=None, placeholder="Scan Otomatis")
+        m_40k_cpm = st.number_input("40K CPM:", value=None, placeholder="Scan Otomatis")
     with col_b:
-        m_40p = st.number_input("40 Plastik:", min_value=0.0, value=0.0)
-        m_40p_cpm = st.number_input("40P CPM:", min_value=0.0, value=0.0)
+        m_40p = st.number_input("40 Plastik:", value=None, placeholder="Wajib Diisi")
+        m_40p_cpm = st.number_input("40P CPM:", value=None, placeholder="Wajib Diisi")
     with col_c:
-        m_50k = st.number_input("50 Kertas:", min_value=0.0, value=0.0)
-        m_50k_cpm = st.number_input("50K CPM:", min_value=0.0, value=0.0)
+        m_50k = st.number_input("50 Kertas:", value=None, placeholder="Scan Otomatis")
+        m_50k_cpm = st.number_input("50K CPM:", value=None, placeholder="Scan Otomatis")
     
     st.markdown("---")
     mode = st.selectbox("3. Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
@@ -90,8 +89,7 @@ with col1:
 with col2:
     st.subheader("4. Hasil Kalkulasi & Jadwal")
     if st.button("Generate Planning", type="primary"):
-        # Bisa diproses asal ada teks stok dan (ada foto ATAU ada input manual)
-        if stok_text and (so_image or m_40p > 0 or m_40k > 0 or m_50k > 0): 
+        if stok_text: 
             with st.spinner("Memproses data..."):
                 stok = parse_stock(stok_text)
                 
@@ -100,17 +98,17 @@ with col2:
                     so, raw_text = parse_so_image(img)
                 else:
                     so = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
-                    raw_text = "Tidak ada gambar yang di-upload."
+                    raw_text = "Tidak ada gambar."
                 
-                # Timpa (override) hasil scan dengan input manual jika nilainya lebih dari 0
-                if m_40k > 0: so['40K'] = m_40k
-                if m_40k_cpm > 0: so['40K_CPM'] = m_40k_cpm
-                if m_40p > 0: so['40P'] = m_40p 
-                else: so['40P'] = 0 # Plastik selalu manual, jadi fallback ke 0
-                if m_40p_cpm > 0: so['40P_CPM'] = m_40p_cpm
-                else: so['40P_CPM'] = 0
-                if m_50k > 0: so['50K'] = m_50k
-                if m_50k_cpm > 0: so['50K_CPM'] = m_50k_cpm
+                # FITUR OVERRIDE: Menimpa hasil foto JIKA kotak manual diisi (Bahkan diisi 0 pun akan tertimpa)
+                if m_40k is not None: so['40K'] = m_40k
+                if m_40k_cpm is not None: so['40K_CPM'] = m_40k_cpm
+                if m_50k is not None: so['50K'] = m_50k
+                if m_50k_cpm is not None: so['50K_CPM'] = m_50k_cpm
+                
+                # Khusus Plastik selalu dari manual, jika kosong anggap 0
+                so['40P'] = m_40p if m_40p is not None else 0.0
+                so['40P_CPM'] = m_40p_cpm if m_40p_cpm is not None else 0.0
                 
                 nets = {}
                 for key in stok.keys():
@@ -120,7 +118,6 @@ with col2:
                 net_40p_total = nets['40P'] + nets['40P_CPM']
                 net_50k_total = nets['50K'] + nets['50K_CPM']
                 
-                # Target runMax berdasarkan Mode Operasional
                 if mode == "Normal":
                     target_40k = 1200; target_40p = 1200
                 elif mode == "Polysling":
@@ -143,7 +140,7 @@ with col2:
                 l1_tasks = []; l2_tasks = []
                 l1_kapasitas = 360; l2_kapasitas = 360
 
-                # L2 - KHUSUS 40 Kertas
+                # L2
                 l2_terpakai = 0
                 if butuh_40k > 0:
                     buka_40k_l2 = min(butuh_40k, 4) 
@@ -152,7 +149,7 @@ with col2:
                     butuh_40k -= buka_40k_l2 
                 if l2_terpakai == 0: l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                # L1 - PRIORITAS: Plastik -> 50 Kertas -> Backup 40 Kertas
+                # L1
                 l1_terpakai = 0
                 if butuh_40p > 0:
                     buka_40p = min(butuh_40p, 2) 
@@ -189,7 +186,5 @@ with col2:
                         'Net (Ton)': [nets['40K'], nets['40K_CPM'], nets['40P'], nets['40P_CPM'], nets['50K'], nets['50K_CPM']]
                     })
                     st.dataframe(df_baca, hide_index=True)
-                    st.text("Teks Mentah dari Gambar:")
-                    st.text(raw_text)
         else:
-            st.warning("Mohon isi teks stok dan upload gambar SO (atau isi manual) terlebih dahulu.")
+            st.warning("Mohon Paste teks Stok Gudang terlebih dahulu.")
