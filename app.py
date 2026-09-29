@@ -33,7 +33,7 @@ def parse_stock(text):
                 
     return stock
 
-# --- FUNGSI EKSTRAKSI GAMBAR (KUNCI TITIK DESIMAL) ---
+# --- FUNGSI EKSTRAKSI GAMBAR (KUNCI TITIK DESIMAL + STRIP) ---
 def parse_so_image(image):
     text = pytesseract.image_to_string(image)
     so_data = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
@@ -43,6 +43,9 @@ def parse_so_image(image):
         if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
             # Hapus teks '40KG' atau '50KG' agar tidak mengganggu
             cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+            
+            # UBAH STRIP (-) MENJADI 0.00 AGAR DIKENALI SEBAGAI DESIMAL
+            cleaned = re.sub(r'(?<!\S)-(?!\S)', '0.00', cleaned)
             
             # Khusus mencari angka yang ADA TITIK DESIMALNYA (Ciri khas SO READY)
             decimal_numbers = re.findall(r'\b\d+(?:,\d{3})*\.\d+\b', cleaned)
