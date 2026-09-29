@@ -33,26 +33,71 @@ def parse_stock(text):
                 
     return stock
 
-# --- FUNGSI EKSTRAKSI GAMBAR ---
+# --- FUNGSI EKSTRAKSI GAMBAR (SUPER KETAT) ---
 def parse_so_image(image):
-    text = pytesseract.image_to_string(image)
+    # Gunakan psm 6 agar Tesseract membaca tabel sebagai satu blok teks utuh per baris
+    text = pytesseract.image_to_string(image, config='--psm 6')
     so_data = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
     
-    lines = text.upper().split('\n')
-    for line in lines:
-        if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
-            cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
-            cleaned = re.sub(r'(?<!\S)-(?!\S)', '0', cleaned)
-            numbers = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', cleaned)
-            
-            if len(numbers) >= 3:
-                val = float(numbers[2].replace(',', ''))
-                if '40' in line:
-                    if 'CPM' in line: so_data['40K_CPM'] += val
-                    else: so_data['40K'] += val
-                elif '50' in line:
-                    if 'CPM' in line: so_data['50K_CPM'] += val
-                    else: so_data['50K'] += val
+    # 1. Bersihkan tanda strip (-) yang berdiri sendiri menjadi 0
+    text = re.sub(r'(?<!\S)-(?!\S)', '0', text)
+    
+    # 2. Pola pencarian ketat berdasarkan nama produk di awal baris
+    pattern_40k = r'40\s*KG\s*BAG\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
+    pattern_40k_cpm = r'40\s*KG\s*BAG\s*PRY/CPM\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
+    pattern_50k = r'50\s*KG\s*BAG\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
+    pattern_50k_cpm = r'50\s*KG\s*BAG\s*PRY/CPM\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
+
+    # Eksekusi pencarian
+    match_40k = re.search(pattern_40k, text, re.IGNORECASE)
+    match_40k_cpm = re.search(pattern_40k_cpm, text, re.IGNORECASE)
+    match_50k = re.search(pattern_50k, text, re.IGNORECASE)
+    match_50k_cpm = re.search(pattern_50k_cpm, text, re.IGNORECASE)
+
+    # Ambil group ke-3 (kolom SO READY)
+    if match_40k:
+        # Jika CPM cocok, pastikan 40K reguler tidak mengambil data yang sama
+        if not ('PRY' in match_40k.group(0).upper()):
+             so_data['40K'] = float(match_40k.group(3).replace(',', ''))
+             
+    # Fallback pencarian manual jika regex meleset karena format gambar pecah
+    if so_data['40K'] == 0:
+        lines = text.upper().split('\n')
+        for line in lines:
+            if '40KG' in line and 'CPM' not in line and 'PLASTIC' not in line and 'TOTAL' not in line:
+                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
+                if len(nums) >= 3:
+                     so_data['40K'] = float(nums[2].replace(',', ''))
+                     break
+
+    if match_40k_cpm:
+        so_data['40K_CPM'] = float(match_40k_cpm.group(3).replace(',', ''))
+    else:
+        lines = text.upper().split('\n')
+        for line in lines:
+            if '40KG' in line and 'CPM' in line:
+                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
+                if len(nums) >= 3:
+                     so_data['40K_CPM'] = float(nums[2].replace(',', ''))
+                     break
+
+    if match_50k:
+        if not ('PRY' in match_50k.group(0).upper()):
+             so_data['50K'] = float(match_50k.group(3).replace(',', ''))
+    if so_data['50K'] == 0:
+        lines = text.upper().split('\n')
+        for line in lines:
+            if '50KG' in line and 'CPM' not in line and 'TOTAL' not in line:
+                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
+                if len(nums) >= 3:
+                     so_data['50K'] = float(nums[2].replace(',', ''))
+                     break
+
+    if match_50k_cpm:
+        so_data['50K_CPM'] = float(match_50k_cpm.group(3).replace(',', ''))
                     
     return so_data, text
 
@@ -79,7 +124,7 @@ with col2:
     st.subheader("4. Hasil Kalkulasi & Jadwal")
     if st.button("Generate Planning", type="primary"):
         if stok_text and so_image:
-            with st.spinner("Menghitung Logika Rule Engine Excel..."):
+            with st.spinner("Memindai gambar tabel..."):
                 stok = parse_stock(stok_text)
                 img = Image.open(so_image)
                 so, raw_text = parse_so_image(img)
@@ -117,7 +162,6 @@ with col2:
                 butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
                 butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
                 
-                # PERBAIKAN LOGIKA 50K: Jika surplus (Net >= 0), butuh = 0.
                 if net_50k_total >= 0:
                     butuh_50k = 0
                 else:
@@ -178,6 +222,9 @@ with col2:
                         'Net (Ton)': [nets['40K'], nets['40K_CPM'], nets['40P'], nets['40P_CPM'], nets['50K'], nets['50K_CPM']]
                     })
                     st.dataframe(df_baca, hide_index=True)
+                    
+                    st.text("Teks Mentah dari Gambar (Untuk Debugging):")
+                    st.text(raw_text)
 
         else:
             st.warning("Mohon isi teks stok dan upload gambar SO terlebih dahulu.")
