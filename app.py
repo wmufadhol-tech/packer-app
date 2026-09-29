@@ -7,7 +7,7 @@ import pandas as pd
 st.set_page_config(page_title="Auto-Planner Packer", layout="wide")
 st.title("🏭 Auto-Planner Packer L1 & L2")
 
-# --- FUNGSI EKSTRAKSI TEKS (STOK 6 VARIAN) ---
+# --- FUNGSI EKSTRAKSI TEKS (STOK 6 VARIAN) DIPERBAIKI ---
 def parse_stock(text):
     stock = {'40K': 0, '40K_CPM': 0, '40P': 0, '40P_CPM': 0, '50K': 0, '50K_CPM': 0}
     if not text: return stock
@@ -18,16 +18,19 @@ def parse_stock(text):
         if not match: continue
         val = int(match.group(1))
         
-        if '40' in line and ('kertas' in line or 'k ' in line or 'k' in line):
-            if 'cpm' in line: stock['40K_CPM'] += val
-            else: stock['40K'] += val
-        elif '40' in line and ('plastik' in line or 'p ' in line or 'p' in line):
-            if 'cpm' in line: stock['40P_CPM'] += val
-            else: stock['40P'] += val
-        elif '50' in line and ('kertas' in line or 'k ' in line or 'k' in line):
-            if 'cpm' in line: stock['50K_CPM'] += val
-            else: stock['50K'] += val
-            
+        # Menggunakan \b (word boundary) agar "k" di "plastik" tidak ikut terbaca
+        if '40' in line:
+            if re.search(r'\b(plastik|p)\b', line):
+                if 'cpm' in line: stock['40P_CPM'] += val
+                else: stock['40P'] += val
+            elif re.search(r'\b(kertas|k)\b', line):
+                if 'cpm' in line: stock['40K_CPM'] += val
+                else: stock['40K'] += val
+        elif '50' in line:
+            if re.search(r'\b(kertas|k)\b', line):
+                if 'cpm' in line: stock['50K_CPM'] += val
+                else: stock['50K'] += val
+                
     return stock
 
 # --- FUNGSI EKSTRAKSI GAMBAR (SO KUNCI KOLOM READY) ---
@@ -38,16 +41,16 @@ def parse_so_image(image):
     lines = text.upper().split('\n')
     for line in lines:
         if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
-            # 1. Hapus "40KG"/"50KG" agar tidak terhitung sebagai kolom angka
+            # 1. Hapus "40KG"/"50KG" agar tidak terhitung sebagai angka pesanan
             cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
             
-            # 2. Ubah tanda strip/kosong (-) yang berdiri sendiri menjadi angka 0
+            # 2. Ubah tanda strip (-) tunggal menjadi 0
             cleaned = re.sub(r'(?<!\S)-(?!\S)', '0', cleaned)
             
-            # 3. Cari deretan angka di baris tersebut
+            # 3. Cari deretan angka
             numbers = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', cleaned)
             
-            # 4. Kunci absolut ke kolom "SO Ready Hari Ini" (Index ke-2 setelah Late & Hari Ini)
+            # 4. Ambil angka di kolom "SO Ready Hari Ini" (Index ke-2)
             if len(numbers) >= 3:
                 val = float(numbers[2].replace(',', ''))
                 
