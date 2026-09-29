@@ -95,36 +95,37 @@ with col2:
                 net_40p_total = nets['40P'] + nets['40P_CPM']
                 net_50k_total = nets['50K'] + nets['50K_CPM']
                 
-                # --- LOGIKA THRESHOLD BERDASARKAN MODE ---
+                # --- LOGIKA TARGET (runMax) BERDASARKAN MODE ---
                 if mode == "Normal":
-                    stopMin_40k = 3200
-                    stopMin_40p = 3200
+                    target_40k = 1200
+                    target_40p = 1200
                 elif mode == "Polysling":
-                    stopMin_40k = 2400
-                    stopMin_40p = 7200
+                    target_40k = 1000
+                    target_40p = 3600
                 elif mode == "PM Line 1":
-                    stopMin_40k = 2400
-                    stopMin_40p = 2400
+                    target_40k = 1600
+                    target_40p = 1000
                 elif mode == "PM Line 2":
-                    stopMin_40k = 2400
-                    stopMin_40p = 3200
+                    target_40k = 1000
+                    target_40p = 1600
                 
-                st.write(f"*Sistem membaca target (stopMin) berdasarkan Mode **{mode}**: 40K = {stopMin_40k}T | 40P = {stopMin_40p}T*")
+                st.write(f"*Target produksi (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
 
-                def hitung_palet(net, stopMin, ton_per_palet):
-                    if net >= stopMin: return 0
-                    return math.ceil((stopMin - net) / ton_per_palet)
+                # Pembulatan yang lebih cerdas (mengabaikan selisih tonase kecil)
+                def hitung_palet(net, target, ton_per_palet):
+                    if net >= target: return 0
+                    return round((target - net) / ton_per_palet)
 
-                butuh_40k = hitung_palet(net_40k_total, stopMin_40k, 160)
-                butuh_40p = hitung_palet(net_40p_total, stopMin_40p, 280)
-                butuh_50k = hitung_palet(net_50k_total, ((so['50K'] + so['50K_CPM']) * 2), 200)
+                butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
+                butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
+                butuh_50k = math.ceil((max(0, ((so['50K'] + so['50K_CPM']) * 2) - net_50k_total)) / 200) # 50K khusus selalu dinamis, kejar 0 (impas)
 
                 l1_tasks = []
                 l2_tasks = []
                 l1_kapasitas = 360 
                 l2_kapasitas = 360
 
-                # ALOKASI L2
+                # ALOKASI L2 (Target: 40 Kertas)
                 l2_terpakai = 0
                 if butuh_40k > 0:
                     buka_40k_l2 = min(butuh_40k, 4) 
@@ -135,7 +136,7 @@ with col2:
                 if l2_terpakai == 0:
                     l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                # ALOKASI L1
+                # ALOKASI L1 (Target: 40 Plastik, 50 Kertas, lalu sisa 40 Kertas)
                 l1_terpakai = 0
                 if butuh_40p > 0:
                     buka_40p = min(butuh_40p, 2) 
