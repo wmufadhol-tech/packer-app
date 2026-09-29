@@ -33,71 +33,28 @@ def parse_stock(text):
                 
     return stock
 
-# --- FUNGSI EKSTRAKSI GAMBAR (SUPER KETAT) ---
+# --- FUNGSI EKSTRAKSI GAMBAR (KEMBALI KE NATURAL) ---
 def parse_so_image(image):
-    # Gunakan psm 6 agar Tesseract membaca tabel sebagai satu blok teks utuh per baris
-    text = pytesseract.image_to_string(image, config='--psm 6')
+    # Dihilangkan --psm 6 agar tidak sensitif terhadap garis tabel
+    text = pytesseract.image_to_string(image)
     so_data = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
     
-    # 1. Bersihkan tanda strip (-) yang berdiri sendiri menjadi 0
-    text = re.sub(r'(?<!\S)-(?!\S)', '0', text)
-    
-    # 2. Pola pencarian ketat berdasarkan nama produk di awal baris
-    pattern_40k = r'40\s*KG\s*BAG\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
-    pattern_40k_cpm = r'40\s*KG\s*BAG\s*PRY/CPM\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
-    pattern_50k = r'50\s*KG\s*BAG\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
-    pattern_50k_cpm = r'50\s*KG\s*BAG\s*PRY/CPM\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)\s+(\d+(?:,\d+)*(?:\.\d+)?)'
-
-    # Eksekusi pencarian
-    match_40k = re.search(pattern_40k, text, re.IGNORECASE)
-    match_40k_cpm = re.search(pattern_40k_cpm, text, re.IGNORECASE)
-    match_50k = re.search(pattern_50k, text, re.IGNORECASE)
-    match_50k_cpm = re.search(pattern_50k_cpm, text, re.IGNORECASE)
-
-    # Ambil group ke-3 (kolom SO READY)
-    if match_40k:
-        # Jika CPM cocok, pastikan 40K reguler tidak mengambil data yang sama
-        if not ('PRY' in match_40k.group(0).upper()):
-             so_data['40K'] = float(match_40k.group(3).replace(',', ''))
-             
-    # Fallback pencarian manual jika regex meleset karena format gambar pecah
-    if so_data['40K'] == 0:
-        lines = text.upper().split('\n')
-        for line in lines:
-            if '40KG' in line and 'CPM' not in line and 'PLASTIC' not in line and 'TOTAL' not in line:
-                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
-                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
-                if len(nums) >= 3:
-                     so_data['40K'] = float(nums[2].replace(',', ''))
-                     break
-
-    if match_40k_cpm:
-        so_data['40K_CPM'] = float(match_40k_cpm.group(3).replace(',', ''))
-    else:
-        lines = text.upper().split('\n')
-        for line in lines:
-            if '40KG' in line and 'CPM' in line:
-                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
-                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
-                if len(nums) >= 3:
-                     so_data['40K_CPM'] = float(nums[2].replace(',', ''))
-                     break
-
-    if match_50k:
-        if not ('PRY' in match_50k.group(0).upper()):
-             so_data['50K'] = float(match_50k.group(3).replace(',', ''))
-    if so_data['50K'] == 0:
-        lines = text.upper().split('\n')
-        for line in lines:
-            if '50KG' in line and 'CPM' not in line and 'TOTAL' not in line:
-                clean_line = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
-                nums = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', clean_line)
-                if len(nums) >= 3:
-                     so_data['50K'] = float(nums[2].replace(',', ''))
-                     break
-
-    if match_50k_cpm:
-        so_data['50K_CPM'] = float(match_50k_cpm.group(3).replace(',', ''))
+    lines = text.upper().split('\n')
+    for line in lines:
+        if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
+            cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+            cleaned = re.sub(r'(?<!\S)-(?!\S)', '0', cleaned)
+            numbers = re.findall(r'\b\d+(?:,\d{3})*(?:\.\d+)?\b', cleaned)
+            
+            # Kunci ke kolom ke-3 (SO Ready Hari Ini)
+            if len(numbers) >= 3:
+                val = float(numbers[2].replace(',', ''))
+                if '40' in line:
+                    if 'CPM' in line: so_data['40K_CPM'] += val
+                    else: so_data['40K'] += val
+                elif '50' in line:
+                    if 'CPM' in line: so_data['50K_CPM'] += val
+                    else: so_data['50K'] += val
                     
     return so_data, text
 
@@ -106,16 +63,23 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. Input Data & Scan")
-    stok_text = st.text_area("Paste Teks Stok Gudang:", height=170)
+    stok_text = st.text_area("Paste Teks Stok Gudang:", height=130)
     so_image = st.file_uploader("Upload Gambar Tabel SO (JPG/PNG)", type=['png', 'jpg', 'jpeg'])
     
     st.markdown("---")
-    st.subheader("2. Input Manual SO READY 40 Plastik")
-    col1a, col1b = st.columns(2)
-    with col1a:
-        so_40p_manual = st.number_input("Dynamix (Reguler) Ton:", min_value=0.0, value=0.0, step=10.0)
-    with col1b:
-        so_40p_cpm_manual = st.number_input("Dynamix CPM Ton:", min_value=0.0, value=0.0, step=10.0)
+    st.subheader("2. Backup Manual SO READY (Jika Scan Gagal/0)")
+    st.caption("Jika hasil scan di tabel kanan tidak sesuai, ketik manual di sini:")
+    
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        m_40k = st.number_input("40 Kertas:", min_value=0.0, value=0.0)
+        m_40k_cpm = st.number_input("40K CPM:", min_value=0.0, value=0.0)
+    with col_b:
+        m_40p = st.number_input("40 Plastik:", min_value=0.0, value=0.0)
+        m_40p_cpm = st.number_input("40P CPM:", min_value=0.0, value=0.0)
+    with col_c:
+        m_50k = st.number_input("50 Kertas:", min_value=0.0, value=0.0)
+        m_50k_cpm = st.number_input("50K CPM:", min_value=0.0, value=0.0)
     
     st.markdown("---")
     mode = st.selectbox("3. Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
@@ -123,14 +87,27 @@ with col1:
 with col2:
     st.subheader("4. Hasil Kalkulasi & Jadwal")
     if st.button("Generate Planning", type="primary"):
-        if stok_text and so_image:
-            with st.spinner("Memindai gambar tabel..."):
+        if stok_text and (so_image or m_40p > 0 or m_40k > 0): # Bisa jalan walau tanpa foto asal input manual
+            with st.spinner("Memproses data..."):
                 stok = parse_stock(stok_text)
-                img = Image.open(so_image)
-                so, raw_text = parse_so_image(img)
                 
-                so['40P'] = so_40p_manual
-                so['40P_CPM'] = so_40p_cpm_manual
+                # Gunakan OCR jika ada gambar, jika tidak pakai 0
+                if so_image:
+                    img = Image.open(so_image)
+                    so, raw_text = parse_so_image(img)
+                else:
+                    so = {'40K': 0, '40K_CPM': 0, '50K': 0, '50K_CPM': 0}
+                    raw_text = "Tidak ada gambar diupload."
+                
+                # Override dengan input manual JIKA diisi (Lebih dari 0)
+                if m_40k > 0: so['40K'] = m_40k
+                if m_40k_cpm > 0: so['40K_CPM'] = m_40k_cpm
+                if m_40p > 0: so['40P'] = m_40p # 40 Plastik selalu ambil dari manual
+                else: so['40P'] = 0
+                if m_40p_cpm > 0: so['40P_CPM'] = m_40p_cpm
+                else: so['40P_CPM'] = 0
+                if m_50k > 0: so['50K'] = m_50k
+                if m_50k_cpm > 0: so['50K_CPM'] = m_50k_cpm
                 
                 nets = {}
                 for key in stok.keys():
@@ -141,20 +118,14 @@ with col2:
                 net_50k_total = nets['50K'] + nets['50K_CPM']
                 
                 if mode == "Normal":
-                    target_40k = 1200
-                    target_40p = 1200
+                    target_40k = 1200; target_40p = 1200
                 elif mode == "Polysling":
-                    target_40k = 1000
-                    target_40p = 3600
+                    target_40k = 1000; target_40p = 3600
                 elif mode == "PM Line 1":
-                    target_40k = 1600
-                    target_40p = 1000
+                    target_40k = 1600; target_40p = 1000
                 elif mode == "PM Line 2":
-                    target_40k = 1000
-                    target_40p = 1600
+                    target_40k = 1000; target_40p = 1600
                 
-                st.write(f"*Target produksi (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
-
                 def hitung_palet(net, target, ton_per_palet):
                     if net >= target: return 0
                     return round((target - net) / ton_per_palet)
@@ -162,35 +133,28 @@ with col2:
                 butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
                 butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
                 
-                if net_50k_total >= 0:
-                    butuh_50k = 0
-                else:
-                    butuh_50k = math.ceil(abs(net_50k_total) / 200)
+                if net_50k_total >= 0: butuh_50k = 0
+                else: butuh_50k = math.ceil(abs(net_50k_total) / 200)
 
-                l1_tasks = []
-                l2_tasks = []
-                l1_kapasitas = 360 
-                l2_kapasitas = 360
+                l1_tasks = []; l2_tasks = []
+                l1_kapasitas = 360; l2_kapasitas = 360
 
-                # ALOKASI L2
+                # L2
                 l2_terpakai = 0
                 if butuh_40k > 0:
                     buka_40k_l2 = min(butuh_40k, 4) 
                     l2_tasks.append(f"🔴 BUKA {buka_40k_l2} PALET KANTONG - 40 Kertas")
                     l2_terpakai += buka_40k_l2 * 80
                     butuh_40k -= buka_40k_l2 
-                
-                if l2_terpakai == 0:
-                    l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
+                if l2_terpakai == 0: l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                # ALOKASI L1
+                # L1
                 l1_terpakai = 0
                 if butuh_40p > 0:
                     buka_40p = min(butuh_40p, 2) 
                     l1_tasks.append(f"🔵 BUKA {buka_40p} PALET KANTONG - 40 Plastik")
                     l1_terpakai += buka_40p * 140
                     butuh_40p -= buka_40p
-                
                 if butuh_50k > 0 and l1_terpakai < l1_kapasitas:
                     sisa_slot = l1_kapasitas - l1_terpakai
                     max_50k = sisa_slot // 100
@@ -199,7 +163,6 @@ with col2:
                         l1_tasks.append(f"🟢 BUKA {buka_50k} PALET KANTONG - 50 Kertas")
                         l1_terpakai += buka_50k * 100
                         butuh_50k -= buka_50k
-
                 if butuh_40k > 0 and l1_terpakai < l1_kapasitas:
                     sisa_slot = l1_kapasitas - l1_terpakai
                     max_40k = sisa_slot // 80
@@ -207,9 +170,7 @@ with col2:
                     if buka_40k_l1 > 0:
                         l1_tasks.append(f"🟠 (Backup) BUKA {buka_40k_l1} PALET KANTONG - 40 Kertas")
                         l1_terpakai += buka_40k_l1 * 80
-
-                if l1_terpakai == 0:
-                    l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
+                if l1_terpakai == 0: l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
 
                 st.success("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
                 st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
@@ -222,9 +183,7 @@ with col2:
                         'Net (Ton)': [nets['40K'], nets['40K_CPM'], nets['40P'], nets['40P_CPM'], nets['50K'], nets['50K_CPM']]
                     })
                     st.dataframe(df_baca, hide_index=True)
-                    
-                    st.text("Teks Mentah dari Gambar (Untuk Debugging):")
+                    st.text("Teks Mentah dari Gambar:")
                     st.text(raw_text)
-
         else:
-            st.warning("Mohon isi teks stok dan upload gambar SO terlebih dahulu.")
+            st.warning("Mohon isi teks stok dan lengkapi data SO terlebih dahulu.")
