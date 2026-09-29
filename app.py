@@ -95,7 +95,6 @@ with col2:
                 net_40p_total = nets['40P'] + nets['40P_CPM']
                 net_50k_total = nets['50K'] + nets['50K_CPM']
                 
-                # --- LOGIKA TARGET (runMax) BERDASARKAN MODE ---
                 if mode == "Normal":
                     target_40k = 1200
                     target_40p = 1200
@@ -111,21 +110,25 @@ with col2:
                 
                 st.write(f"*Target produksi (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
 
-                # Pembulatan yang lebih cerdas (mengabaikan selisih tonase kecil)
                 def hitung_palet(net, target, ton_per_palet):
                     if net >= target: return 0
                     return round((target - net) / ton_per_palet)
 
                 butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
                 butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
-                butuh_50k = math.ceil((max(0, ((so['50K'] + so['50K_CPM']) * 2) - net_50k_total)) / 200) # 50K khusus selalu dinamis, kejar 0 (impas)
+                
+                # PERBAIKAN LOGIKA 50K: Jika surplus (Net >= 0), butuh = 0.
+                if net_50k_total >= 0:
+                    butuh_50k = 0
+                else:
+                    butuh_50k = math.ceil(abs(net_50k_total) / 200)
 
                 l1_tasks = []
                 l2_tasks = []
                 l1_kapasitas = 360 
                 l2_kapasitas = 360
 
-                # ALOKASI L2 (Target: 40 Kertas)
+                # ALOKASI L2
                 l2_terpakai = 0
                 if butuh_40k > 0:
                     buka_40k_l2 = min(butuh_40k, 4) 
@@ -136,7 +139,7 @@ with col2:
                 if l2_terpakai == 0:
                     l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                # ALOKASI L1 (Target: 40 Plastik, 50 Kertas, lalu sisa 40 Kertas)
+                # ALOKASI L1
                 l1_terpakai = 0
                 if butuh_40p > 0:
                     buka_40p = min(butuh_40p, 2) 
