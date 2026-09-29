@@ -8,7 +8,7 @@ import math
 st.set_page_config(page_title="Auto-Planner Packer", layout="wide")
 st.title("🏭 Auto-Planner Packer L1 & L2")
 
-# --- FUNGSI EKSTRAKSI TEKS (STOK 6 VARIAN) ---
+# --- FUNGSI EKSTRAKSI TEKS (STOK) ---
 def parse_stock(text):
     stock = {'40K': 0, '40K_CPM': 0, '40P': 0, '40P_CPM': 0, '50K': 0, '50K_CPM': 0}
     if not text: return stock
@@ -71,9 +71,12 @@ with col1:
         so_40p_manual = st.number_input("Dynamix (Reguler) Ton:", min_value=0.0, value=0.0, step=10.0)
     with col1b:
         so_40p_cpm_manual = st.number_input("Dynamix CPM Ton:", min_value=0.0, value=0.0, step=10.0)
+    
+    st.markdown("---")
+    mode = st.selectbox("3. Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
 
 with col2:
-    st.subheader("3. Hasil Kalkulasi & Jadwal")
+    st.subheader("4. Hasil Kalkulasi & Jadwal")
     if st.button("Generate Planning", type="primary"):
         if stok_text and so_image:
             with st.spinner("Menghitung Logika Rule Engine Excel..."):
@@ -84,50 +87,58 @@ with col2:
                 so['40P'] = so_40p_manual
                 so['40P_CPM'] = so_40p_cpm_manual
                 
-                # Kalkulasi Net (Stok Ton - SO Ton)
                 nets = {}
                 for key in stok.keys():
                     nets[key] = (stok[key] * 2) - so.get(key, 0)
                 
-                # --- RULE ENGINE EXCEL (PENENTUAN KESIMPULAN MESIN) ---
                 net_40k_total = nets['40K'] + nets['40K_CPM']
                 net_40p_total = nets['40P'] + nets['40P_CPM']
                 net_50k_total = nets['50K'] + nets['50K_CPM']
                 
-                # Konstanta Konversi Palet
-                # 40K: 1 Plt Kantong = 80 Plt Semen = 160 Ton
-                # 40P: 1 Plt Kantong = 140 Plt Semen = 280 Ton
-                # 50K: 1 Plt Kantong = 100 Plt Semen = 200 Ton
+                # --- LOGIKA THRESHOLD BERDASARKAN MODE ---
+                if mode == "Normal":
+                    stopMin_40k = 3200
+                    stopMin_40p = 3200
+                elif mode == "Polysling":
+                    stopMin_40k = 2400
+                    stopMin_40p = 7200
+                elif mode == "PM Line 1":
+                    stopMin_40k = 2400
+                    stopMin_40p = 2400
+                elif mode == "PM Line 2":
+                    stopMin_40k = 2400
+                    stopMin_40p = 3200
                 
-                # Hitung Kebutuhan Palet Kantong untuk mencapai StopMin (Aman)
+                st.write(f"*Sistem membaca target (stopMin) berdasarkan Mode **{mode}**: 40K = {stopMin_40k}T | 40P = {stopMin_40p}T*")
+
                 def hitung_palet(net, stopMin, ton_per_palet):
                     if net >= stopMin: return 0
                     return math.ceil((stopMin - net) / ton_per_palet)
 
-                butuh_40k = hitung_palet(net_40k_total, 3200, 160)
-                butuh_40p = hitung_palet(net_40p_total, 3200, 280)
-                butuh_50k = hitung_palet(net_50k_total, ((so['50K'] + so['50K_CPM']) * 2), 200) # 50K Dinamis
+                butuh_40k = hitung_palet(net_40k_total, stopMin_40k, 160)
+                butuh_40p = hitung_palet(net_40p_total, stopMin_40p, 280)
+                butuh_50k = hitung_palet(net_50k_total, ((so['50K'] + so['50K_CPM']) * 2), 200)
 
                 l1_tasks = []
                 l2_tasks = []
-                l1_kapasitas = 360 # Maks palet semen per shift
+                l1_kapasitas = 360 
                 l2_kapasitas = 360
 
-                # 1. ALOKASI L2 (Prioritas Utama: 40 Kertas)
+                # ALOKASI L2
                 l2_terpakai = 0
                 if butuh_40k > 0:
-                    buka_40k_l2 = min(butuh_40k, 4) # Maks 4 palet (320 plt semen) agar tidak over 360
+                    buka_40k_l2 = min(butuh_40k, 4) 
                     l2_tasks.append(f"🔴 BUKA {buka_40k_l2} PALET KANTONG - 40 Kertas")
                     l2_terpakai += buka_40k_l2 * 80
-                    butuh_40k -= buka_40k_l2 # Sisa jika masih kurang
+                    butuh_40k -= buka_40k_l2 
                 
                 if l2_terpakai == 0:
                     l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                # 2. ALOKASI L1 (Prioritas: 40 Plastik ➔ 50 Kertas ➔ Backup 40 Kertas)
+                # ALOKASI L1
                 l1_terpakai = 0
                 if butuh_40p > 0:
-                    buka_40p = min(butuh_40p, 2) # 2 palet = 280 plt semen
+                    buka_40p = min(butuh_40p, 2) 
                     l1_tasks.append(f"🔵 BUKA {buka_40p} PALET KANTONG - 40 Plastik")
                     l1_terpakai += buka_40p * 140
                     butuh_40p -= buka_40p
@@ -141,7 +152,6 @@ with col2:
                         l1_terpakai += buka_50k * 100
                         butuh_50k -= buka_50k
 
-                # Backup 40 Kertas ke L1 jika L2 sudah penuh tapi 40K masih kurang
                 if butuh_40k > 0 and l1_terpakai < l1_kapasitas:
                     sisa_slot = l1_kapasitas - l1_terpakai
                     max_40k = sisa_slot // 80
@@ -153,7 +163,6 @@ with col2:
                 if l1_terpakai == 0:
                     l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
 
-                # Tampilkan Output Eksekusi
                 st.success("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
                 st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
                 
