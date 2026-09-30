@@ -1,6 +1,6 @@
 import streamlit as st
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance
 import re
 import pandas as pd
 import math
@@ -31,51 +31,39 @@ def parse_stock(text):
                 else: stock['50K'] += val
     return stock
 
-# --- FUNGSI MEMBERSIHKAN ANGKA RIBUAN OCR ---
+# --- FUNGSI MEMBERSIHKAN ANGKA RIBUAN ---
 def parse_weird_number(num_str):
-    # Mengatasi error baca OCR seperti: 2.136.00 atau 2,136,00
     if len(num_str) > 3 and num_str[-3] in ['.', ',']:
         main_part = num_str[:-3]
-        main_part = re.sub(r'[.,]', '', main_part) # Hapus semua pemisah ribuan
+        main_part = re.sub(r'[.,]', '', main_part)
         return float(main_part)
     return 0.0
 
-# --- FUNGSI EKSTRAKSI TEKS EXCEL (AKURASI 100%) ---
-def parse_so_excel_text(text):
-    so_data = {'40K': 0.0, '40K_CPM': 0.0, '50K': 0.0, '50K_CPM': 0.0}
-    lines = text.upper().split('\n')
-    for line in lines:
-        if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
-            cols = line.split('\t')
-            if len(cols) >= 4:
-                val_str = cols[3].strip() # Kolom ke-4 adalah SO READY
-                if val_str == '-' or val_str == '':
-                    val = 0.0
-                else:
-                    val = float(val_str.replace(',', ''))
-                
-                if '40' in line:
-                    if 'CPM' in line: so_data['40K_CPM'] += val
-                    else: so_data['40K'] += val
-                elif '50' in line:
-                    if 'CPM' in line: so_data['50K_CPM'] += val
-                    else: so_data['50K'] += val
-    return so_data
-
-# --- FUNGSI EKSTRAKSI GAMBAR OCR ---
+# --- FUNGSI EKSTRAKSI GAMBAR (DENGAN FILTER PENJERNIH LAYAR) ---
 @st.cache_data
 def get_ocr_data(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
+    
+    # 🌟 PROSES PENJERNIHAN GAMBAR (ANTI-SILAU MONITOR) 🌟
+    img = img.convert('L') # 1. Ubah jadi hitam putih murni (Grayscale)
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(2.5) # 2. Naikkan kontras 250% agar tulisan tajam
+    # 3. Perbesar dimensi gambar 2x lipat agar titik dan koma terbaca jelas
+    img = img.resize((img.width * 2, img.height * 2), Image.Resampling.LANCZOS)
+    
+    # AI Membaca gambar yang sudah dijernihkan
     text = pytesseract.image_to_string(img)
     so_data = {'40K': 0.0, '40K_CPM': 0.0, '50K': 0.0, '50K_CPM': 0.0}
     
     lines = text.upper().split('\n')
     for line in lines:
         if ('40KG' in line or '50KG' in line) and 'PLASTIC' not in line:
+            # Buang tulisan ukuran
             cleaned = re.sub(r'\b[45]0\s*KG\b', '', line, flags=re.IGNORECASE)
+            # Ubah tanda strip (-) di Excel menjadi 0.00
             cleaned = re.sub(r'(?<!\S)[-—_~](?!\S)', '0.00', cleaned)
             
-            # Pola baru yang tahan banting (menangkap 2,136.00 atau 2.136.00)
+            # Cari format desimal (contoh: 2,136.00 atau 52.00)
             decimal_numbers = re.findall(r'\b\d+(?:[.,]\d{3})*[.,]\d{2}\b', cleaned)
             
             if decimal_numbers:
@@ -86,45 +74,29 @@ def get_ocr_data(image_bytes):
                 elif '50' in line:
                     if 'CPM' in line: so_data['50K_CPM'] += val
                     else: so_data['50K'] += val
-    return so_data
+    return so_data, text # Kembalikan teks mentahnya juga untuk dipantau
 
 # --- UI APLIKASI ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. Input Data")
-    stok_text = st.text_area("📦 Paste Teks Stok Gudang:", height=110)
+    stok_text = st.text_area("📦 Paste Teks Stok Gudang:", height=130)
     
     st.markdown("---")
-    st.write("📝 **Data Sales Order (Pilih salah satu metode):**")
-    
-    # METODE 1: PASTE EXCEL (DISARANKAN)
-    so_text_excel = st.text_area("🌟 METODE TERBAIK: Copy-Paste Tabel Excel langsung ke sini:", height=90, placeholder="Blok tabel di Excel Anda, lalu copy dan paste di sini.")
-    
-    st.write("Atau")
-    
-    # METODE 2: UPLOAD GAMBAR
-    so_image = st.file_uploader("📷 METODE ALTERNATIF: Upload Gambar Tabel", type=['png', 'jpg', 'jpeg'])
+    st.write("📝 **Upload Data Sales Order:**")
+    so_image = st.file_uploader("📷 Upload Gambar Tabel", type=['png', 'jpg', 'jpeg'])
     
     st.markdown("---")
-    mode = st.selectbox("⚙️ Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
+    mode = st.selectbox("⚙️️ Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
 
 with col2:
     st.subheader("2. Verifikasi Data (BISA DIEDIT!)")
     
-    # Deteksi input (Prioritaskan Paste Excel jika keduanya diisi)
-    has_so_data = bool(so_text_excel or so_image)
-    
-    if stok_text and has_so_data:
+    if stok_text and so_image:
         
         stok = parse_stock(stok_text)
-        
-        if so_text_excel:
-            so_final = parse_so_excel_text(so_text_excel)
-            st.success("✅ Membaca dari Teks Excel (Akurasi 100%)")
-        else:
-            so_final = get_ocr_data(so_image.getvalue())
-            st.info("📷 Membaca dari Gambar Kamera")
+        so_final, raw_text = get_ocr_data(so_image.getvalue())
         
         df_edit = pd.DataFrame({
             'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
@@ -132,7 +104,7 @@ with col2:
             'SO Ready (Ton)': [so_final['40K'], so_final['40K_CPM'], 0.0, 0.0, so_final['50K'], so_final['50K_CPM']]
         })
         
-        st.caption("Klik dua kali angka di tabel bawah untuk mengoreksi sebelum klik Generate.")
+        st.info("💡 **Tabel di bawah ini interaktif!** Jika hasil scan kamera masih meleset, **klik dua kali** angkanya di dalam tabel dan ketik angka yang benar sebelum klik Generate.")
         edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True)
         
         st.markdown("---")
@@ -233,12 +205,14 @@ with col2:
                 else:
                     st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
                 
-                with st.expander("Klik untuk lihat detail Net Tonase Akhir"):
+                with st.expander("Klik untuk lihat detail Net Tonase Akhir & Debugging Foto"):
                     df_akhir = pd.DataFrame({
                         'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
-                        'Net (Ton)': [net_40k, net_40kc, net_40p, net_40pc, net_50k, net_50kc]
+                        'Net Akhir (Ton)': [net_40k, net_40kc, net_40p, net_40pc, net_50k, net_50kc]
                     })
                     st.dataframe(df_akhir, hide_index=True)
+                    st.text("📝 TEKS MENTAH HASIL SCAN FOTO (Setelah dijernihkan):")
+                    st.text(raw_text)
 
     else:
-        st.warning("Mohon masukkan teks Stok Gudang dan Data SO terlebih dahulu.")
+        st.warning("Mohon masukkan teks Stok Gudang dan Upload Data SO terlebih dahulu.")
