@@ -10,12 +10,10 @@ st.set_page_config(page_title="Auto-Planner Packer", layout="wide")
 st.title("🏭 Auto-Planner Packer L1 & L2")
 
 # --- INISIALISASI MEMORI (SESSION STATE) ---
-if 'so_data_locked' not in st.session_state:
-    st.session_state.so_data_locked = None
-if 'last_image_name' not in st.session_state:
-    st.session_state.last_image_name = None
-if 'last_excel_text' not in st.session_state:
-    st.session_state.last_excel_text = None
+if 'tabel_siap' not in st.session_state:
+    st.session_state.tabel_siap = False
+if 'df_mentah' not in st.session_state:
+    st.session_state.df_mentah = None
 
 # --- FUNGSI EKSTRAKSI TEKS (STOK) ---
 def parse_stock(text):
@@ -55,10 +53,8 @@ def parse_so_excel_text(text):
             cols = line.split('\t')
             if len(cols) >= 4:
                 val_str = cols[3].strip()
-                if val_str == '-' or val_str == '':
-                    val = 0.0
-                else:
-                    val = float(val_str.replace(',', ''))
+                if val_str == '-' or val_str == '': val = 0.0
+                else: val = float(val_str.replace(',', ''))
                 
                 if '40' in line:
                     if 'CPM' in line: so_data['40K_CPM'] += val
@@ -68,7 +64,7 @@ def parse_so_excel_text(text):
                     else: so_data['50K'] += val
     return so_data
 
-# --- FUNGSI EKSTRAKSI GAMBAR (PENJERNIH) ---
+# --- FUNGSI EKSTRAKSI GAMBAR ---
 @st.cache_data
 def get_ocr_data(image_bytes):
     img = Image.open(io.BytesIO(image_bytes))
@@ -106,153 +102,148 @@ with col1:
     
     st.markdown("---")
     st.write("📝 **Data Sales Order (Pilih salah satu metode):**")
-    
     so_text_excel = st.text_area("🌟 METODE TERBAIK: Copy-Paste Tabel Excel ke sini:", height=90)
     st.write("Atau")
     so_image = st.file_uploader("📷 METODE FOTO: Upload Gambar Tabel", type=['png', 'jpg', 'jpeg'])
     
     st.markdown("---")
     mode = st.selectbox("⚙ Mode Operasional", ["Normal", "Polysling", "PM Line 1", "PM Line 2"])
+    
+    st.markdown("---")
+    # TOMBOL 1: PERINTAH BACA DATA
+    if st.button("🔄 1. Baca & Siapkan Tabel", type="secondary", use_container_width=True):
+        if stok_text and (so_text_excel or so_image):
+            with st.spinner("Memproses..."):
+                stok = parse_stock(stok_text)
+                if so_text_excel:
+                    so_final = parse_so_excel_text(so_text_excel)
+                else:
+                    so_final = get_ocr_data(so_image.getvalue())
+                
+                # Buat DataFrame segar dan simpan ke state
+                st.session_state.df_mentah = pd.DataFrame({
+                    'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
+                    'Stok (Plt)': [stok['40K'], stok['40K_CPM'], stok['40P'], stok['40P_CPM'], stok['50K'], stok['50K_CPM']],
+                    'SO Ready (Ton)': [so_final['40K'], so_final['40K_CPM'], 0.0, 0.0, so_final['50K'], so_final['50K_CPM']]
+                })
+                st.session_state.tabel_siap = True
+        else:
+            st.warning("Mohon isi teks Stok Gudang dan Data SO terlebih dahulu.")
 
 with col2:
-    st.subheader("2. Verifikasi Data (BISA DIEDIT!)")
+    st.subheader("2. Verifikasi & Generate")
     
-    has_so_data = bool(so_text_excel or so_image)
-    
-    if stok_text and has_so_data:
-        stok = parse_stock(stok_text)
+    # Hanya tampilkan tabel jika tombol 1 sudah diklik
+    if st.session_state.tabel_siap and st.session_state.df_mentah is not None:
+        st.info("💡 **Tabel ini interaktif!** Klik dua kali angka di tabel untuk mengoreksi sebelum klik Generate.")
         
-        # PROSES UPDATE MEMORI HANYA JIKA ADA INPUT BARU
-        if so_text_excel and so_text_excel != st.session_state.last_excel_text:
-            st.session_state.so_data_locked = parse_so_excel_text(so_text_excel)
-            st.session_state.last_excel_text = so_text_excel
-            st.session_state.last_image_name = None 
-            st.rerun() 
-            
-        elif so_image and so_image.name != st.session_state.last_image_name:
-            # PERBAIKAN ERROR DI SINI: Hanya butuh 1 variabel untuk menampung hasil tabel
-            st.session_state.so_data_locked = get_ocr_data(so_image.getvalue())
-            st.session_state.last_image_name = so_image.name
-            st.session_state.last_excel_text = None 
-            st.rerun()
+        # Tabel Interaktif dari data segar
+        edited_df = st.data_editor(st.session_state.df_mentah, hide_index=True, use_container_width=True)
         
-        # Ambil data dari memori yang sudah terkunci
-        so_final = st.session_state.so_data_locked
+        st.markdown("---")
         
-        if so_final:
-            df_edit = pd.DataFrame({
-                'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
-                'Stok (Plt)': [stok['40K'], stok['40K_CPM'], stok['40P'], stok['40P_CPM'], stok['50K'], stok['50K_CPM']],
-                'SO Ready (Ton)': [so_final['40K'], so_final['40K_CPM'], 0.0, 0.0, so_final['50K'], so_final['50K_CPM']]
-            })
-            
-            st.info("💡 **Tabel di bawah ini interaktif!** Klik dua kali angka SO Ready di tabel untuk mengoreksi sebelum klik Generate.")
-            edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True)
-            
-            st.markdown("---")
-            
-            if st.button("🚀 Generate Planning", type="primary"):
-                with st.spinner("Menghitung Jadwal..."):
-                    
-                    s_40k = edited_df.loc[0, 'Stok (Plt)']; o_40k = edited_df.loc[0, 'SO Ready (Ton)']
-                    s_40kc = edited_df.loc[1, 'Stok (Plt)']; o_40kc = edited_df.loc[1, 'SO Ready (Ton)']
-                    s_40p = edited_df.loc[2, 'Stok (Plt)']; o_40p = edited_df.loc[2, 'SO Ready (Ton)']
-                    s_40pc = edited_df.loc[3, 'Stok (Plt)']; o_40pc = edited_df.loc[3, 'SO Ready (Ton)']
-                    s_50k = edited_df.loc[4, 'Stok (Plt)']; o_50k = edited_df.loc[4, 'SO Ready (Ton)']
-                    s_50kc = edited_df.loc[5, 'Stok (Plt)']; o_50kc = edited_df.loc[5, 'SO Ready (Ton)']
+        # TOMBOL 2: GENERATE
+        if st.button("🚀 2. Generate Planning L1 & L2", type="primary", use_container_width=True):
+            with st.spinner("Menghitung Jadwal..."):
+                
+                s_40k = edited_df.loc[0, 'Stok (Plt)']; o_40k = edited_df.loc[0, 'SO Ready (Ton)']
+                s_40kc = edited_df.loc[1, 'Stok (Plt)']; o_40kc = edited_df.loc[1, 'SO Ready (Ton)']
+                s_40p = edited_df.loc[2, 'Stok (Plt)']; o_40p = edited_df.loc[2, 'SO Ready (Ton)']
+                s_40pc = edited_df.loc[3, 'Stok (Plt)']; o_40pc = edited_df.loc[3, 'SO Ready (Ton)']
+                s_50k = edited_df.loc[4, 'Stok (Plt)']; o_50k = edited_df.loc[4, 'SO Ready (Ton)']
+                s_50kc = edited_df.loc[5, 'Stok (Plt)']; o_50kc = edited_df.loc[5, 'SO Ready (Ton)']
 
-                    net_40k = (s_40k * 2) - o_40k
-                    net_40kc = (s_40kc * 2) - o_40kc
-                    net_40p = (s_40p * 2) - o_40p
-                    net_40pc = (s_40pc * 2) - o_40pc
-                    net_50k = (s_50k * 2) - o_50k
-                    net_50kc = (s_50kc * 2) - o_50kc
-                    
-                    net_40k_total = net_40k + net_40kc
-                    net_40p_total = net_40p + net_40pc
-                    net_50k_total = net_50k + net_50kc
-                    
-                    if mode == "Normal":
-                        target_40k = 1200; target_40p = 1200
-                    elif mode == "Polysling":
-                        target_40k = 1000; target_40p = 3600
-                    elif mode == "PM Line 1":
-                        target_40k = 1600; target_40p = 1000
-                    elif mode == "PM Line 2":
-                        target_40k = 1000; target_40p = 1600
-                    
-                    def hitung_palet(net, target, ton_per_palet):
-                        if net >= target: return 0
-                        return round((target - net) / ton_per_palet)
+                net_40k = (s_40k * 2) - o_40k
+                net_40kc = (s_40kc * 2) - o_40kc
+                net_40p = (s_40p * 2) - o_40p
+                net_40pc = (s_40pc * 2) - o_40pc
+                net_50k = (s_50k * 2) - o_50k
+                net_50kc = (s_50kc * 2) - o_50kc
+                
+                net_40k_total = net_40k + net_40kc
+                net_40p_total = net_40p + net_40pc
+                net_50k_total = net_50k + net_50kc
+                
+                if mode == "Normal":
+                    target_40k = 1200; target_40p = 1200
+                elif mode == "Polysling":
+                    target_40k = 1000; target_40p = 3600
+                elif mode == "PM Line 1":
+                    target_40k = 1600; target_40p = 1000
+                elif mode == "PM Line 2":
+                    target_40k = 1000; target_40p = 1600
+                
+                def hitung_palet(net, target, ton_per_palet):
+                    if net >= target: return 0
+                    return round((target - net) / ton_per_palet)
 
-                    butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
-                    butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
-                    
-                    if net_50k_total >= 0: butuh_50k = 0
-                    else: butuh_50k = math.ceil(abs(net_50k_total) / 200)
+                butuh_40k = hitung_palet(net_40k_total, target_40k, 160)
+                butuh_40p = hitung_palet(net_40p_total, target_40p, 280)
+                
+                if net_50k_total >= 0: butuh_50k = 0
+                else: butuh_50k = math.ceil(abs(net_50k_total) / 200)
 
-                    l1_tasks = []; l2_tasks = []
-                    l1_kapasitas = 360; l2_kapasitas = 360
+                l1_tasks = []; l2_tasks = []
+                l1_kapasitas = 360; l2_kapasitas = 360
 
-                    # L2
-                    if mode == "PM Line 2":
-                        l2_tasks.append("🔧 PREVENTIVE MAINTENANCE (PM) - Mesin Stop")
-                    else:
-                        l2_terpakai = 0
-                        if butuh_40k > 0:
-                            buka_40k_l2 = min(butuh_40k, 4) 
-                            l2_tasks.append(f"🔴 BUKA {buka_40k_l2} PALET KANTONG - 40 Kertas")
-                            l2_terpakai += buka_40k_l2 * 80
-                            butuh_40k -= buka_40k_l2 
-                        if l2_terpakai == 0: 
-                            l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
+                # L2
+                if mode == "PM Line 2":
+                    l2_tasks.append("🔧 PREVENTIVE MAINTENANCE (PM) - Mesin Stop")
+                else:
+                    l2_terpakai = 0
+                    if butuh_40k > 0:
+                        buka_40k_l2 = min(butuh_40k, 4) 
+                        l2_tasks.append(f"🔴 BUKA {buka_40k_l2} PALET KANTONG - 40 Kertas")
+                        l2_terpakai += buka_40k_l2 * 80
+                        butuh_40k -= buka_40k_l2 
+                    if l2_terpakai == 0: 
+                        l2_tasks.append("⚪ STOP / Kebutuhan L2 (40K) Terpenuhi")
 
-                    # L1
-                    if mode == "PM Line 1":
-                        l1_tasks.append("🔧 PREVENTIVE MAINTENANCE (PM) - Mesin Stop")
-                    else:
-                        l1_terpakai = 0
-                        if butuh_40p > 0:
-                            buka_40p = min(butuh_40p, 2) 
-                            l1_tasks.append(f"🔵 BUKA {buka_40p} PALET KANTONG - 40 Plastik")
-                            l1_terpakai += buka_40p * 140
-                            butuh_40p -= buka_40p
-                        if butuh_50k > 0 and l1_terpakai < l1_kapasitas:
-                            sisa_slot = l1_kapasitas - l1_terpakai
-                            max_50k = sisa_slot // 100
-                            buka_50k = min(butuh_50k, max_50k)
-                            if buka_50k > 0:
-                                l1_tasks.append(f"🟢 BUKA {buka_50k} PALET KANTONG - 50 Kertas")
-                                l1_terpakai += buka_50k * 100
-                                butuh_50k -= buka_50k
-                        if butuh_40k > 0 and l1_terpakai < l1_kapasitas:
-                            sisa_slot = l1_kapasitas - l1_terpakai
-                            max_40k = sisa_slot // 80
-                            buka_40k_l1 = min(butuh_40k, max_40k)
-                            if buka_40k_l1 > 0:
-                                l1_tasks.append(f"🟠 (Backup) BUKA {buka_40k_l1} PALET KANTONG - 40 Kertas")
-                                l1_terpakai += buka_40k_l1 * 80
-                        if l1_terpakai == 0: 
-                            l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
+                # L1
+                if mode == "PM Line 1":
+                    l1_tasks.append("🔧 PREVENTIVE MAINTENANCE (PM) - Mesin Stop")
+                else:
+                    l1_terpakai = 0
+                    if butuh_40p > 0:
+                        buka_40p = min(butuh_40p, 2) 
+                        l1_tasks.append(f"🔵 BUKA {buka_40p} PALET KANTONG - 40 Plastik")
+                        l1_terpakai += buka_40p * 140
+                        butuh_40p -= buka_40p
+                    if butuh_50k > 0 and l1_terpakai < l1_kapasitas:
+                        sisa_slot = l1_kapasitas - l1_terpakai
+                        max_50k = sisa_slot // 100
+                        buka_50k = min(butuh_50k, max_50k)
+                        if buka_50k > 0:
+                            l1_tasks.append(f"🟢 BUKA {buka_50k} PALET KANTONG - 50 Kertas")
+                            l1_terpakai += buka_50k * 100
+                            butuh_50k -= buka_50k
+                    if butuh_40k > 0 and l1_terpakai < l1_kapasitas:
+                        sisa_slot = l1_kapasitas - l1_terpakai
+                        max_40k = sisa_slot // 80
+                        buka_40k_l1 = min(butuh_40k, max_40k)
+                        if buka_40k_l1 > 0:
+                            l1_tasks.append(f"🟠 (Backup) BUKA {buka_40k_l1} PALET KANTONG - 40 Kertas")
+                            l1_terpakai += buka_40k_l1 * 80
+                    if l1_terpakai == 0: 
+                        l1_tasks.append("⚪ STOP / Kebutuhan L1 Terpenuhi")
 
-                    st.write(f"*Target (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
-                    
-                    if mode == "PM Line 1":
-                        st.warning("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
-                    else:
-                        st.success("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
-                    
-                    if mode == "PM Line 2":
-                        st.warning("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
-                    else:
-                        st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
-                    
-                    with st.expander("Klik untuk lihat detail Net Tonase Akhir"):
-                        df_akhir = pd.DataFrame({
-                            'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
-                            'Net Akhir (Ton)': [net_40k, net_40kc, net_40p, net_40pc, net_50k, net_50kc]
-                        })
-                        st.dataframe(df_akhir, hide_index=True)
-
+                st.write(f"*Target (runMax) Mode **{mode}**: 40K = {target_40k}T | 40P = {target_40p}T*")
+                
+                if mode == "PM Line 1":
+                    st.warning("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
+                else:
+                    st.success("**JADWAL L1 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l1_tasks))
+                
+                if mode == "PM Line 2":
+                    st.warning("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
+                else:
+                    st.info("**JADWAL L2 SHIFT INI (URUTAN):**\n\n" + "\n\n".join(f"- {task}" for task in l2_tasks))
+                
+                with st.expander("Klik untuk lihat detail Net Tonase Akhir"):
+                    df_akhir = pd.DataFrame({
+                        'Varian Produk': ['40 Kertas', '40K CPM', '40 Plastik', '40P CPM', '50 Kertas', '50K CPM'],
+                        'Net Akhir (Ton)': [net_40k, net_40kc, net_40p, net_40pc, net_50k, net_50kc]
+                    })
+                    st.dataframe(df_akhir, hide_index=True)
     else:
-        st.warning("Mohon masukkan teks Stok Gudang dan Upload Data SO terlebih dahulu.")
+        st.info("👈 Silakan lengkapi data di sebelah kiri, lalu klik tombol '1. Baca & Siapkan Tabel'.")
