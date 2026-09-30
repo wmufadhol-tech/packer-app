@@ -46,7 +46,7 @@ def parse_weird_number(num_str):
         return float(main_part)
     return 0.0
 
-# --- FUNGSI EKSTRAKSI EXCEL Teks ---
+# --- FUNGSI EKSTRAKSI EXCEL TEKS ---
 def parse_so_excel_text(text):
     so_data = {'40K': 0.0, '40K_CPM': 0.0, '50K': 0.0, '50K_CPM': 0.0}
     lines = text.upper().split('\n')
@@ -107,7 +107,7 @@ with col1:
     st.markdown("---")
     st.write("📝 **Data Sales Order (Pilih salah satu metode):**")
     
-    so_text_excel = st.text_area("🌟 METODE TERBAIK: Copy-Paste Tabel Excel langsung ke sini:", height=90)
+    so_text_excel = st.text_area("🌟 METODE TERBAIK: Copy-Paste Tabel Excel ke sini:", height=90)
     st.write("Atau")
     so_image = st.file_uploader("📷 METODE FOTO: Upload Gambar Tabel", type=['png', 'jpg', 'jpeg'])
     
@@ -126,13 +126,14 @@ with col2:
         if so_text_excel and so_text_excel != st.session_state.last_excel_text:
             st.session_state.so_data_locked = parse_so_excel_text(so_text_excel)
             st.session_state.last_excel_text = so_text_excel
-            st.session_state.last_image_name = None # Reset image
-            st.rerun() # Refresh untuk memuat memori
+            st.session_state.last_image_name = None 
+            st.rerun() 
             
         elif so_image and so_image.name != st.session_state.last_image_name:
-            st.session_state.so_data_locked, _ = get_ocr_data(so_image.getvalue())
+            # PERBAIKAN ERROR DI SINI: Hanya butuh 1 variabel untuk menampung hasil tabel
+            st.session_state.so_data_locked = get_ocr_data(so_image.getvalue())
             st.session_state.last_image_name = so_image.name
-            st.session_state.last_excel_text = None # Reset text
+            st.session_state.last_excel_text = None 
             st.rerun()
         
         # Ambil data dari memori yang sudah terkunci
@@ -145,7 +146,7 @@ with col2:
                 'SO Ready (Ton)': [so_final['40K'], so_final['40K_CPM'], 0.0, 0.0, so_final['50K'], so_final['50K_CPM']]
             })
             
-            st.info("💡 **Tabel di bawah ini interaktif!** Klik dua kali angka di tabel untuk mengoreksi sebelum klik Generate.")
+            st.info("💡 **Tabel di bawah ini interaktif!** Klik dua kali angka SO Ready di tabel untuk mengoreksi sebelum klik Generate.")
             edited_df = st.data_editor(df_edit, hide_index=True, use_container_width=True)
             
             st.markdown("---")
